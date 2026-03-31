@@ -6,10 +6,9 @@ _[PowerSync](https://www.powersync.com) is a sync engine for building local-firs
 
 ## PowerSync Native
 
-> [!CAUTION]
-> The PowerSync Rust SDK is currently experimental and in a pre-alpha state.
-> We offer no stability guarantees for this SDK, and can't guarantee continued support for it.
-> If you're interested in using this, please [reach out](https://www.powersync.com/contact)!
+> [!NOTE]
+> The PowerSync Rust SDK is currently in an [alpha state](https://docs.powersync.com/resources/feature-status), intended for external testing and public feedback.
+> Expect breaking changes and instability as development continues.
 
 This repository contains code used to build a PowerSync SDK for native development.
 PowerSync is available as a Rust crate in `powersync/`, and on crates.io as the `powersync` crate.
