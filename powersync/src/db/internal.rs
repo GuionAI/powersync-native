@@ -1,6 +1,6 @@
 use event_listener::EventListener;
 use futures_lite::{FutureExt, Stream, StreamExt, ready};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 use std::sync::{Mutex, Weak};
 use std::time::Duration;
 use std::{
@@ -97,7 +97,7 @@ impl InnerPowerSyncState {
         write_checkpoint: Option<i64>,
     ) -> Result<(), PowerSyncError> {
         let mut writer = self.writer().await?;
-        let writer = writer.transaction()?;
+        let writer = writer.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         writer.execute("DELETE FROM ps_crud WHERE id <= ?", params![last_client_id])?;
         let mut target_op: i64 = MAX_OP_ID;

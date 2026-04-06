@@ -51,6 +51,12 @@ impl From<RawPowerSyncError> for PowerSyncError {
     }
 }
 
+impl From<io::Error> for PowerSyncError {
+    fn from(value: io::Error) -> Self {
+        RawPowerSyncError::IO { inner: value }.into()
+    }
+}
+
 impl Display for PowerSyncError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.inner.fmt(f)
