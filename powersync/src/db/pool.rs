@@ -43,6 +43,7 @@ impl ConnectionPool {
         for _ in 0..5 {
             let reader = Connection::open(&path)?;
             reader.pragma_update(None, "query_only", true)?;
+            reader.pragma_update(None, "busy_timeout", 30_000)?;
             readers.push(reader);
         }
 
@@ -99,7 +100,7 @@ impl ConnectionPool {
             LeasedConnection {
                 inner: OwnedConnectionLease::Reader {
                     connection: MaybeUninit::new(reader),
-                    pool: self.clone(),
+                    release: readers.release_reader.clone(),
                 },
             }
         } else {
@@ -141,7 +142,7 @@ impl ConnectionPool {
             LeasedConnection {
                 inner: OwnedConnectionLease::Reader {
                     connection: MaybeUninit::new(reader),
-                    pool: self.clone(),
+                    release: readers.release_reader.clone(),
                 },
             }
         } else {
@@ -196,7 +197,9 @@ enum OwnedConnectionLease {
     },
     Reader {
         connection: MaybeUninit<Connection>,
-        pool: ConnectionPool,
+        /// Sender cloned at lease creation — avoids navigating back through the pool
+        /// and eliminates the need for an `unwrap()` on `pool.state.readers` in Drop.
+        release: Sender<Connection>,
     },
 }
 
@@ -207,18 +210,17 @@ impl Drop for OwnedConnectionLease {
                 // Send update notifications for writes made on this connection while leased.
                 let _ = pool.take_update_notifications(connection);
             }
-            OwnedConnectionLease::Reader { connection, pool } => {
+            OwnedConnectionLease::Reader {
+                connection,
+                release,
+            } => {
                 let connection = std::mem::replace(connection, MaybeUninit::uninit());
                 let connection = unsafe {
                     // safety: Only dropped here
                     connection.assume_init()
                 };
 
-                pool.state
-                    .readers
-                    .as_ref()
-                    .unwrap()
-                    .release_reader
+                release
                     .send_blocking(connection)
                     .expect("should send connection into pool");
             }

@@ -29,7 +29,7 @@ async-oneshot = "0.5.9"
 atomic_enum = "0.3.0"
 event-listener = "5.4.1"
 futures-lite = "2.6.1"
-reqwest = { version = "0.13.2", optional = true, features = ["stream"] }
+reqwest = { version = "0.13.2", default-features = false, optional = true, features = ["stream", "rustls"] }
 bytes = "1"
 log = "0.4.28"
 pin-project-lite = "0.2.16"
@@ -49,3 +49,7 @@ async-task = "4.7.1"
 futures-lite = "2.6.1"
 futures-test = "0.3.31"
 powersync_test_utils = { path = "../powersync_test_utils" }
+
+[lints.clippy]
+clone_on_copy = "allow"
+derivable_impls = "allow"

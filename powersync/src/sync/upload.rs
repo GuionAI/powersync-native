@@ -5,7 +5,7 @@ use futures_lite::{
     future::{self, Boxed},
 };
 use log::{debug, info, warn};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::db::watch::ListenerConfiguration;
 use crate::sync::coordinator::SyncCoordinator;
@@ -366,7 +366,7 @@ impl PendingCheckpointRequest {
         info!("Updating target to checkpoint {}", self.crud_sequence);
 
         let mut writer = db.writer().await?;
-        let writer = writer.transaction()?;
+        let writer = writer.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         if CrudUpload::read_oldest_crud_item_id(&writer)?.is_some() {
             warn!("ps_crud is not empty, won't advance target");

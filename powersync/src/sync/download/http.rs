@@ -46,10 +46,11 @@ pub fn sync_stream(
 
     let stream = stream::once_future(response);
 
-    StreamExt::flat_map(stream, |response| {
-        let items = response_to_lines(response);
-
-        stream::once(Ok(DownloadEvent::ConnectionEstablished)).chain(items)
+    StreamExt::flat_map(stream, |response| match response {
+        Err(e) => stream::once(Err(e)).boxed(),
+        Ok(response) => stream::once(Ok(DownloadEvent::ConnectionEstablished))
+            .chain(response_to_lines(Ok(response)))
+            .boxed(),
     })
 }
 
