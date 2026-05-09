@@ -83,7 +83,7 @@ impl InnerPowerSyncState {
 
         let serialized_schema = serde_json::to_string(&self.schema)?;
         conn.prepare("SELECT powersync_replace_schema(?)")?
-            .query_one(params![serialized_schema], |_| Ok(()))?;
+            .query_row(params![serialized_schema], |_| Ok(()))?;
         // TODO: Update readers? Should be fine at the moment because we're only doing this during
         // initialization.
         Ok(())

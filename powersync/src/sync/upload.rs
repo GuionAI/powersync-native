@@ -298,7 +298,7 @@ impl<'a> CrudUpload<'a> {
         let client_id = {
             let reader = self.db.reader().await?;
             let mut stmt = reader.prepare("SELECT powersync_client_id()")?;
-            let id: String = stmt.query_one(params![], |row| row.get(0))?;
+            let id: String = stmt.query_row(params![], |row| row.get(0))?;
             id
         };
 

@@ -25,7 +25,7 @@ impl ConnectionPool {
         connection
             .prepare("SELECT powersync_update_hooks('install');")
             .expect("should prepare statement for update hooks")
-            .query_one(params![], |_| Ok(()))
+            .query_row(params![], |_| Ok(()))
             .expect("could not install update hook");
 
         Arc::new(Mutex::new(connection))
@@ -119,7 +119,7 @@ impl ConnectionPool {
         writer: &Connection,
     ) -> Result<SqliteUpdateNotification, Error> {
         let mut stmt = writer.prepare_cached("SELECT powersync_update_hooks('get');")?;
-        let rows: String = stmt.query_one(params![], |row| row.get(0))?;
+        let rows: String = stmt.query_row(params![], |row| row.get(0))?;
 
         let updates = serde_json::from_str::<SqliteUpdateNotification>(&rows)
             .map_err(|_| Error::InvalidQuery)?;
