@@ -18,7 +18,7 @@ fn link_core_extension() {
 
         let reader = db.reader().await.unwrap();
         let mut stmt = reader.prepare("SELECT powersync_rs_version();").unwrap();
-        let _: String = stmt.query_one(params![], |row| row.get(0)).unwrap();
+        let _: String = stmt.query_row(params![], |row| row.get(0)).unwrap();
     });
 }
 

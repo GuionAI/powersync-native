@@ -305,7 +305,7 @@ fn raw_table_clear() {
         {
             let writer = db.writer().await.unwrap();
             let mut stmt = writer.prepare("SELECT powersync_clear(0)").unwrap();
-            stmt.query_one(params![], |_| Ok(())).unwrap();
+            stmt.query_row(params![], |_| Ok(())).unwrap();
         }
 
         assert_eq!(
@@ -347,7 +347,7 @@ fn raw_table_crud_trigger() {
 
             for write in &["INSERT", "UPDATE", "DELETE"] {
                 trigger_stmt
-                    .query_one(
+                    .query_row(
                         params![serialized_table, format!("users_{write}"), write],
                         |_| Ok(()),
                     )
