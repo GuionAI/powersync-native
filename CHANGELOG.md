@@ -5,7 +5,6 @@
 - Release the download writer before awaiting connector or network work.
 - Report `ConnectionEstablished` only after a successful HTTP response.
 - Accept CRLF framing in JSON sync streams.
-- Use reqwest with rustls and without native TLS defaults.
 
 ## 0.0.7
 

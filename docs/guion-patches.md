@@ -12,7 +12,6 @@ an explicit Guion build policy.
 | Download writer scope | Connector credential/network awaits can retain the only writer and deadlock other writes | `fetching_credentials_does_not_hold_the_download_writer_lease` | Missing | Retain; upstream candidate |
 | Connection status ordering | Transport and non-2xx errors can emit `ConnectionEstablished` before the error | `sync::download::http::tests` | Missing | Retain; upstream candidate |
 | CRLF framing | JSON lines ending in CRLF expose a trailing `\r` to the parser | `util::line_split::test` | Missing | Retain; upstream candidate |
-| rustls-only reqwest | Guion musl builds must not depend on native TLS/OpenSSL defaults | musl CI and dependency graph check | Policy differs | Retain as Guion build policy |
 
 Upstream v0.0.7 already retries a failed `upload_data` call in the same upload cycle. Its
 `upload_retry` test remains the source of truth; the fork does not add another retry worker.

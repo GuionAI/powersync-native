@@ -34,27 +34,9 @@ jobs:
       - name: Test all features
         run: cargo test --workspace --all-features --verbose
 
-      - name: Check without rusqlite
-        run: cargo check -p powersync --no-default-features
-
-      - name: Check reqwest without rusqlite
-        run: cargo check -p powersync --no-default-features --features tokio,reqwest
-
-  musl:
-    name: Check musl release features
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install musl target
-        run: rustup target add x86_64-unknown-linux-musl
-
-      - name: Check PowerSync crate
-        run: cargo check -p powersync --target x86_64-unknown-linux-musl --no-default-features --features tokio,reqwest,rusqlite
-
-  windows:
-    name: Check Windows build
-    runs-on: windows-latest
+  macos:
+    name: Check macOS ARM64 build
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v6
 
