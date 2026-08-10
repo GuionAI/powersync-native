@@ -206,10 +206,8 @@ fn path_to_cstring(p: &Path) -> Result<CString, PowerSyncError> {
 
 #[cfg(all(test, feature = "rusqlite"))]
 mod tests {
-    use std::sync::{
-        Mutex,
-        atomic::{AtomicUsize, Ordering},
-    };
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use powersync_sqlite_nostd::bindings::{
         SQLITE_OPEN_CREATE, SQLITE_OPEN_READWRITE, sqlite3_memory_used,
@@ -218,7 +216,9 @@ mod tests {
     use super::*;
 
     static NEXT_TEST_DATABASE: AtomicUsize = AtomicUsize::new(0);
-    static SQLITE_TEST_LOCK: Mutex<()> = Mutex::new(());
+    const SQLITE_MEMORY_TEST: &str =
+        "db::connection::tests::repeated_open_failures_do_not_leak_sqlite_handles";
+    const SQLITE_MEMORY_TEST_CHILD: &str = "POWERSYNC_SQLITE_MEMORY_TEST_CHILD";
 
     fn test_database_path(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -230,7 +230,6 @@ mod tests {
 
     #[test]
     fn failed_commit_rolls_back_before_returning_connection() {
-        let _lock = SQLITE_TEST_LOCK.lock().unwrap();
         let path = test_database_path("commit-rollback");
         let setup = rusqlite::Connection::open(&path).unwrap();
         setup
@@ -269,7 +268,20 @@ mod tests {
 
     #[test]
     fn repeated_open_failures_do_not_leak_sqlite_handles() {
-        let _lock = SQLITE_TEST_LOCK.lock().unwrap();
+        if std::env::var_os(SQLITE_MEMORY_TEST_CHILD).is_none() {
+            let status = Command::new(std::env::current_exe().unwrap())
+                .arg(SQLITE_MEMORY_TEST)
+                .arg("--exact")
+                .env(SQLITE_MEMORY_TEST_CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "SQLite memory test subprocess failed: {status}"
+            );
+            return;
+        }
+
         let path = test_database_path("missing-parent").join("database.sqlite");
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
 
