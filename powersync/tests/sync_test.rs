@@ -426,6 +426,60 @@ fn upload_retry() {
 }
 
 #[test]
+fn connect_uploads_crud_that_was_already_queued() {
+    struct CompleteQueuedUpload {
+        db: PowerSyncDatabase,
+        counter: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl BackendConnector for CompleteQueuedUpload {
+        async fn fetch_credentials(&self) -> Result<PowerSyncCredentials, PowerSyncError> {
+            Ok(PowerSyncCredentials {
+                endpoint: "https://rust.unit.test.powersync.com/".to_string(),
+                token: "token".to_string(),
+            })
+        }
+
+        async fn upload_data(&self) -> Result<(), PowerSyncError> {
+            let Some(transaction) = self.db.next_crud_transaction().await? else {
+                return Ok(());
+            };
+            self.counter.fetch_add(1, Ordering::SeqCst);
+            transaction.complete().await
+        }
+    }
+
+    let sync = SyncStreamTest::new();
+    sync.run(async {
+        let writer = sync.db.writer().await.unwrap();
+        writer
+            .execute(
+                "INSERT INTO users (id, name) VALUES (uuid(), 'queued before connect')",
+                params![],
+            )
+            .unwrap();
+    });
+    let upload_counter = Arc::new(AtomicUsize::default());
+    sync.run(sync.db.connect(SyncOptions::new(CompleteQueuedUpload {
+        db: sync.db.clone(),
+        counter: upload_counter.clone(),
+    })));
+
+    sync.run(async {
+        for _ in 0..100 {
+            if upload_counter.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+            future::yield_now().await;
+        }
+
+        assert_eq!(upload_counter.load(Ordering::SeqCst), 1);
+        assert!(sync.db.next_crud_transaction().await.unwrap().is_none());
+    });
+}
+
+#[test]
 fn reports_correct_times() {
     let sync = SyncStreamTest::new();
     sync.connect();
