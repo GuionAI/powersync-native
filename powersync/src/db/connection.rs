@@ -1,11 +1,10 @@
 use crate::error::{PowerSyncError, RawPowerSyncError};
 use num_traits::cast::FromPrimitive;
-use powersync_sqlite_nostd::bindings::sqlite3_open_v2;
+use powersync_sqlite_nostd::bindings::{sqlite3_close_v2, sqlite3_open_v2};
 use powersync_sqlite_nostd::{Connection, ManagedConnection, ManagedStmt, ResultCode, sqlite3};
 use std::ffi::{CStr, CString, c_int};
-use std::mem::MaybeUninit;
 use std::path::Path;
-use std::ptr::null;
+use std::ptr::{null, null_mut};
 
 /// The SQLite connection used by the PowerSync Rust SDK.
 ///
@@ -97,8 +96,9 @@ impl<'a> TransactionGuard<'a> {
     }
 
     pub fn commit(mut self) -> Result<(), PowerSyncError> {
+        self.inner.exec(c"COMMIT")?;
         self.active = false;
-        self.inner.exec(c"COMMIT")
+        Ok(())
     }
 
     fn rollback_internal(&mut self) -> Result<(), PowerSyncError> {
@@ -154,20 +154,22 @@ unsafe impl Send for RawSqliteConnection {}
 
 impl RawSqliteConnection {
     pub fn open(path: &CStr, flags: u32) -> Result<Self, PowerSyncError> {
-        let mut db = MaybeUninit::<*mut sqlite3>::uninit();
+        let mut db = null_mut();
         let rc = ResultCode::from_i32(unsafe {
-            sqlite3_open_v2(path.as_ptr(), db.as_mut_ptr(), flags as c_int, null())
+            sqlite3_open_v2(path.as_ptr(), &mut db, flags as c_int, null())
         })
         .unwrap();
 
         if rc == ResultCode::OK {
-            Ok(Self(ManagedConnection {
-                db: unsafe {
-                    // sqlite3_open_v2 returned 0, so SQLite will have written the pointer.
-                    db.assume_init()
-                },
-            }))
+            Ok(Self(ManagedConnection { db }))
         } else {
+            if !db.is_null() {
+                // SQLite may allocate an error-bearing handle even when open fails.
+                // No statements can exist yet, so closing it here releases all resources.
+                unsafe {
+                    sqlite3_close_v2(db);
+                }
+            }
             Err(RawPowerSyncError::RawSqlite {
                 code: rc,
                 context: format!("Could not open database {}", path.to_string_lossy()),
@@ -200,6 +202,88 @@ fn path_to_cstring(p: &Path) -> Result<CString, PowerSyncError> {
             desc: format!("Invalid path: {p:?}").into(),
         })?,
     )
+}
+
+#[cfg(all(test, feature = "rusqlite"))]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use powersync_sqlite_nostd::bindings::{
+        SQLITE_OPEN_CREATE, SQLITE_OPEN_READWRITE, sqlite3_memory_used,
+    };
+
+    use super::*;
+
+    static NEXT_TEST_DATABASE: AtomicUsize = AtomicUsize::new(0);
+
+    fn test_database_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "powersync-{name}-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_TEST_DATABASE.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn failed_commit_rolls_back_before_returning_connection() {
+        let path = test_database_path("commit-rollback");
+        let setup = rusqlite::Connection::open(&path).unwrap();
+        setup
+            .execute_batch(
+                "PRAGMA journal_mode = DELETE;
+                 CREATE TABLE values_table (value INTEGER NOT NULL);
+                 INSERT INTO values_table VALUES (1);",
+            )
+            .unwrap();
+
+        let reader = rusqlite::Connection::open(&path).unwrap();
+        reader.execute_batch("BEGIN").unwrap();
+        let _: i64 = reader
+            .query_row("SELECT value FROM values_table", [], |row| row.get(0))
+            .unwrap();
+
+        let mut writer = SqliteConnection::from(rusqlite::Connection::open(&path).unwrap());
+        let tx = TransactionGuard::new(&mut writer).unwrap();
+        tx.inner.exec(c"UPDATE values_table SET value = 2").unwrap();
+
+        assert!(tx.commit().is_err());
+        assert!(unsafe { writer.handle().get_autocommit() });
+
+        reader.execute_batch("ROLLBACK").unwrap();
+        let value: i64 = writer
+            .rusqlite_connection()
+            .query_row("SELECT value FROM values_table", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, 1);
+
+        drop(reader);
+        drop(setup);
+        drop(writer);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn repeated_open_failures_do_not_leak_sqlite_handles() {
+        let path = test_database_path("missing-parent").join("database.sqlite");
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+
+        // Warm SQLite's process-global caches before measuring per-open resources.
+        for _ in 0..128 {
+            assert!(RawSqliteConnection::open_path(&path, flags).is_err());
+        }
+        let memory_before = unsafe { sqlite3_memory_used() };
+
+        for _ in 0..128 {
+            assert!(RawSqliteConnection::open_path(&path, flags).is_err());
+        }
+
+        let memory_after = unsafe { sqlite3_memory_used() };
+        assert!(
+            memory_after - memory_before < 1024,
+            "failed opens leaked {} SQLite bytes",
+            memory_after - memory_before
+        );
+    }
 }
 
 #[cfg(not(unix))]
