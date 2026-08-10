@@ -34,20 +34,20 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Format code
-        run: cargo fmt
+      - name: Check formatting
+        run: cargo fmt --all --check
 
-      - name: Lint with clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Lint all targets and features
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: Run tests
-        run: cargo test --all-features
+      - name: Test all features
+        run: cargo test --workspace --all-features
 
-      - name: Check for security vulnerabilities
+      - name: Check dependencies
         run: cargo deny check
 
-      - name: Build
-        run: cargo build --all-features
+      - name: Build all features
+        run: cargo build --workspace --all-features
 
   osv-scan:
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@v2.3.5

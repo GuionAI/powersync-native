@@ -41,7 +41,7 @@ impl Stream for LineSplitter {
                 // Split into line including the \n, and the rest
                 let remainder = this.unfinished_line.split_off(idx + 1);
                 let mut completed_line = mem::replace(&mut this.unfinished_line, remainder);
-                // Remove \n from the completed line, then strip trailing \r for \r\n endings.
+                // Remove \n, then strip the optional \r from CRLF input.
                 completed_line.pop();
                 if completed_line.last() == Some(&b'\r') {
                     completed_line.pop();
@@ -95,6 +95,39 @@ mod test {
     }
 
     #[test]
+    fn splits_crlf_lines_without_retaining_carriage_returns() {
+        let bytes = Bytes::copy_from_slice(b"hello\r\nworld\r\n");
+        let mut lines = LineSplitter::from(stream::once(Ok(bytes)).boxed());
+
+        let next = future::block_on(async { lines.try_next().await }).unwrap();
+        assert_eq!(next.unwrap(), "hello");
+        let next = future::block_on(async { lines.try_next().await }).unwrap();
+        assert_eq!(next.unwrap(), "world");
+        let next = future::block_on(async { lines.try_next().await }).unwrap();
+        assert!(next.is_none());
+    }
+
+    #[test]
+    fn splits_crlf_across_chunks_and_preserves_other_carriage_returns() {
+        let mut lines = LineSplitter::from(
+            stream::iter(vec![
+                Ok(Bytes::from_static(b"first\r")),
+                Ok(Bytes::from_static(b"\nsecond\nlast\r")),
+            ])
+            .boxed(),
+        );
+
+        let next = future::block_on(async { lines.try_next().await }).unwrap();
+        assert_eq!(next.unwrap(), "first");
+        let next = future::block_on(async { lines.try_next().await }).unwrap();
+        assert_eq!(next.unwrap(), "second");
+        let next = future::block_on(async { lines.try_next().await }).unwrap();
+        assert_eq!(next.unwrap(), "last\r");
+        let next = future::block_on(async { lines.try_next().await }).unwrap();
+        assert!(next.is_none());
+    }
+
+    #[test]
     fn utf8_split_across_chunks() {
         // "é" is two bytes: 0xC3 0xA9, split across chunk boundary. This verifies we don't try to
         // decode individual source chunks.
@@ -108,19 +141,6 @@ mod test {
 
         let next = future::block_on(async { lines.try_next().await }).unwrap();
         assert_eq!(next.unwrap(), "café");
-        let next = future::block_on(async { lines.try_next().await }).unwrap();
-        assert!(next.is_none());
-    }
-
-    #[test]
-    fn splits_crlf_lines() {
-        let bytes = Bytes::copy_from_slice(b"hello\r\nworld\r\n");
-        let mut lines = LineSplitter::from(stream::once(Ok(bytes)).boxed());
-
-        let next = future::block_on(async { lines.try_next().await }).unwrap();
-        assert_eq!(next.unwrap(), "hello");
-        let next = future::block_on(async { lines.try_next().await }).unwrap();
-        assert_eq!(next.unwrap(), "world");
         let next = future::block_on(async { lines.try_next().await }).unwrap();
         assert!(next.is_none());
     }

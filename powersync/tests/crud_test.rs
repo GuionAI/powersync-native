@@ -223,6 +223,35 @@ fn insert() {
 }
 
 #[test]
+fn applies_checkpoint_after_draining_crud_queue() {
+    future::block_on(async move {
+        let test = DatabaseTest::new();
+        let db = test.in_memory_database();
+
+        execute(
+            &db,
+            "INSERT INTO users (id, name) VALUES (?, ?)",
+            params!["test", "name"],
+        )
+        .await;
+
+        let transaction = db.next_crud_transaction().await.unwrap().unwrap();
+        transaction.complete_with_checkpoint(42).await.unwrap();
+
+        let mut reader = db.reader().await.unwrap();
+        let reader = reader.transaction().unwrap();
+        let checkpoint: i64 = reader
+            .query_one(
+                "SELECT powersync_control('target_checkpoint_request_id', NULL)",
+                params![],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(checkpoint, 42);
+    });
+}
+
+#[test]
 fn crud_transactions() {
     async fn create_transaction(db: &PowerSyncDatabase, amount: usize) {
         let mut writer = db.writer().await.unwrap();
@@ -303,9 +332,13 @@ fn raw_table_clear() {
 
         // Running powersync_clear should delete from users
         {
-            let writer = db.writer().await.unwrap();
+            let mut writer = db.writer().await.unwrap();
+            let writer = writer.transaction().unwrap();
+
             let mut stmt = writer.prepare("SELECT powersync_clear(0)").unwrap();
-            stmt.query_row(params![], |_| Ok(())).unwrap();
+            stmt.query_one(params![], |_| Ok(())).unwrap();
+            drop(stmt);
+            writer.commit().unwrap();
         }
 
         assert_eq!(
@@ -347,7 +380,7 @@ fn raw_table_crud_trigger() {
 
             for write in &["INSERT", "UPDATE", "DELETE"] {
                 trigger_stmt
-                    .query_row(
+                    .query_one(
                         params![serialized_table, format!("users_{write}"), write],
                         |_| Ok(()),
                     )

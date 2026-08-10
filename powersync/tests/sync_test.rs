@@ -1,15 +1,27 @@
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::{Duration, SystemTime},
+};
+
 use async_task::Task;
+use async_trait::async_trait;
+use event_listener::Event;
 use futures_lite::{StreamExt, future};
 use powersync::{
-    PowerSyncDatabase, StreamPriority, StreamSubscription, StreamSubscriptionOptions, SyncOptions,
-    SyncStatusData, error::PowerSyncError,
+    BackendConnector, PowerSyncCredentials, PowerSyncDatabase, StreamPriority, StreamSubscription,
+    StreamSubscriptionOptions, SyncOptions, SyncStatusData, error::PowerSyncError,
 };
 use powersync_test_utils::{
     DatabaseTest,
     mock_sync_service::TestConnector,
     sync_line::{Checkpoint, SyncLine},
 };
+use rusqlite::params;
 use serde_json::json;
+use thiserror::Error;
 
 struct SyncStreamTest {
     test: DatabaseTest,
@@ -331,5 +343,210 @@ fn progress_without_priorities() {
 
         request.send_checkpoint_complete(oplog_id, None).await;
         sync.wait_for_status(|s| !s.is_downloading()).await;
+    });
+}
+
+#[test]
+fn upload_retry() {
+    struct FailOnFirstUpload {
+        db: PowerSyncDatabase,
+        counter: Arc<AtomicUsize>,
+        completed_second: Arc<Event>,
+    }
+
+    #[derive(Error, Debug)]
+    #[error("Deliberate failure on first upload")]
+    struct FirstUploadFailure;
+
+    #[async_trait]
+    impl BackendConnector for FailOnFirstUpload {
+        async fn fetch_credentials(&self) -> Result<PowerSyncCredentials, PowerSyncError> {
+            Ok(PowerSyncCredentials {
+                endpoint: "https://rust.unit.test.powersync.com/".to_string(),
+                token: "token".to_string(),
+            })
+        }
+
+        async fn upload_data(&self) -> Result<(), PowerSyncError> {
+            let Some(tx) = self.db.next_crud_transaction().await? else {
+                return Ok(());
+            };
+
+            let old_count = self.counter.fetch_add(1, Ordering::SeqCst);
+            if old_count == 0 {
+                return Err(PowerSyncError::upload_error(FirstUploadFailure));
+            }
+
+            tx.complete().await?;
+            self.completed_second.notify(usize::MAX);
+            Ok(())
+        }
+    }
+
+    let sync = SyncStreamTest::new();
+    let upload_counter = Arc::new(AtomicUsize::default());
+    let event = Arc::new(Event::new());
+    let mut options = SyncOptions::new(FailOnFirstUpload {
+        db: sync.db.clone(),
+        counter: upload_counter.clone(),
+        completed_second: event.clone(),
+    });
+    options.with_retry_delay(Duration::ZERO); // We can't use timers in tests
+    sync.run(sync.db.connect(options));
+
+    sync.run(async {
+        sync.wait_for_status(|s| s.is_connected()).await;
+
+        // Trigger a crud upload.
+        {
+            let writer = sync.db.writer().await.unwrap();
+            writer
+                .execute(
+                    "INSERT INTO users (id, name) VALUES (uuid(), 'local user')",
+                    params![],
+                )
+                .unwrap();
+        }
+
+        // Wait for the second upload to finish.
+        loop {
+            let listener = event.listen();
+            if upload_counter.load(Ordering::SeqCst) == 2 {
+                break;
+            };
+
+            listener.await
+        }
+
+        sync.wait_for_status(|s| s.upload_error().is_none() && !s.is_uploading())
+            .await;
+
+        assert!(sync.db.next_crud_transaction().await.unwrap().is_none());
+    });
+}
+
+#[test]
+fn connect_uploads_crud_that_was_already_queued() {
+    struct CompleteQueuedUpload {
+        db: PowerSyncDatabase,
+        counter: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl BackendConnector for CompleteQueuedUpload {
+        async fn fetch_credentials(&self) -> Result<PowerSyncCredentials, PowerSyncError> {
+            Ok(PowerSyncCredentials {
+                endpoint: "https://rust.unit.test.powersync.com/".to_string(),
+                token: "token".to_string(),
+            })
+        }
+
+        async fn upload_data(&self) -> Result<(), PowerSyncError> {
+            let Some(transaction) = self.db.next_crud_transaction().await? else {
+                return Ok(());
+            };
+            self.counter.fetch_add(1, Ordering::SeqCst);
+            transaction.complete().await
+        }
+    }
+
+    let sync = SyncStreamTest::new();
+    sync.run(async {
+        let writer = sync.db.writer().await.unwrap();
+        writer
+            .execute(
+                "INSERT INTO users (id, name) VALUES (uuid(), 'queued before connect')",
+                params![],
+            )
+            .unwrap();
+    });
+    let upload_counter = Arc::new(AtomicUsize::default());
+    sync.run(sync.db.connect(SyncOptions::new(CompleteQueuedUpload {
+        db: sync.db.clone(),
+        counter: upload_counter.clone(),
+    })));
+
+    sync.run(async {
+        for _ in 0..100 {
+            if upload_counter.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+            future::yield_now().await;
+        }
+
+        assert_eq!(upload_counter.load(Ordering::SeqCst), 1);
+        assert!(sync.db.next_crud_transaction().await.unwrap().is_none());
+    });
+}
+
+#[test]
+fn fetching_credentials_does_not_hold_the_download_writer_lease() {
+    struct WriterUsingConnector {
+        entered: async_channel::Sender<()>,
+        release: async_channel::Receiver<()>,
+    }
+
+    #[async_trait]
+    impl BackendConnector for WriterUsingConnector {
+        async fn fetch_credentials(&self) -> Result<PowerSyncCredentials, PowerSyncError> {
+            self.entered.send(()).await.unwrap();
+            self.release.recv().await.unwrap();
+            Ok(PowerSyncCredentials {
+                endpoint: "https://rust.unit.test.powersync.com/".to_string(),
+                token: "token".to_string(),
+            })
+        }
+
+        async fn upload_data(&self) -> Result<(), PowerSyncError> {
+            Ok(())
+        }
+    }
+
+    let sync = SyncStreamTest::new();
+    let (entered_tx, entered_rx) = async_channel::bounded(1);
+    let (release_tx, release_rx) = async_channel::bounded(1);
+    sync.run(sync.db.connect(SyncOptions::new(WriterUsingConnector {
+        entered: entered_tx,
+        release: release_rx,
+    })));
+
+    sync.run(async {
+        entered_rx.recv().await.unwrap();
+        let writer = future::poll_once(sync.db.writer()).await;
+        assert!(
+            writer.is_some(),
+            "download retained the writer while awaiting credentials"
+        );
+        drop(writer);
+        release_tx.send(()).await.unwrap();
+    });
+}
+
+#[test]
+fn reports_correct_times() {
+    let sync = SyncStreamTest::new();
+    sync.connect();
+
+    sync.run(async {
+        let request = sync.test.http.receive_requests.recv().await.unwrap();
+        sync.wait_for_status(|s| s.is_connected()).await;
+
+        request
+            .send_checkpoint(Checkpoint::single_bucket("a", 0, None))
+            .await;
+        request.send_checkpoint_complete(0, None).await;
+        sync.wait_for_status(|s| !s.is_downloading()).await;
+
+        let stream = sync.db.sync_stream("a", None);
+        let status = sync.db.status();
+        let status = status
+            .for_stream(&stream)
+            .expect("should have stream status");
+        let last_synced_at = status
+            .subscription
+            .last_synced_at()
+            .expect("should have last synced at");
+        let delta = SystemTime::now().duration_since(last_synced_at).unwrap();
+        assert!(delta < Duration::from_secs(5));
     });
 }

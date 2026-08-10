@@ -13,6 +13,9 @@ _[PowerSync](https://www.powersync.com) is a sync engine for building local-firs
 This repository contains code used to build a PowerSync SDK for native development.
 PowerSync is available as a Rust crate in `powersync/`, and on crates.io as the `powersync` crate.
 
+Guion release tags add a small, tested compatibility layer for Guion consumers. See
+[`docs/guion-patches.md`](docs/guion-patches.md) for the exact upstream delta and patch policy.
+
 ## Running the examples
 
 To start an example:
@@ -23,7 +26,7 @@ To start an example:
 3. Compile and run an example here: `cargo run -p egui_todolist`.
 
 ```yaml
-# Sync-rule docs: https://docs.powersync.com/usage/sync-rules
+# Sync Streams docs: https://docs.powersync.com/sync/streams/overview
 streams:
   lists:
     query: SELECT * FROM lists #WHERE owner_id = auth.user_id()
@@ -32,5 +35,5 @@ streams:
     query: SELECT * FROM todos WHERE list_id = subscription.parameter('list') #AND list_id IN (SELECT id FROM lists WHERE owner_id = auth.user_id())
 
 config:
-  edition: 2
+  edition: 3
 ```

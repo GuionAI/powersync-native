@@ -20,22 +20,22 @@ allow = [
     "OpenSSL",
     "Ubuntu-font-1.0",
 ]
-exceptions = []
-# Workspace crates are private/unlicensed
+
 [[licenses.clarify]]
 crate = "powersync"
 expression = "Apache-2.0"
 license-files = []
+
 [[licenses.clarify]]
 crate = "powersync_test_utils"
 expression = "Apache-2.0"
 license-files = []
-# egui_todolist is an example app — treat as Apache-2.0
+
 [[licenses.clarify]]
 crate = "egui_todolist"
 expression = "Apache-2.0"
 license-files = []
-# aws-lc-sys pulls in OpenSSL — add exception for ISC+OpenSSL combined license
+
 [[licenses.clarify]]
 crate = "aws-lc-sys"
 expression = "ISC AND (Apache-2.0 OR ISC) AND OpenSSL"
@@ -47,16 +47,11 @@ wildcards = "allow"
 
 [advisories]
 ignore = [
-    # aws-lc-sys transitive advisory — upstream is aws-lc
-    "RUSTSEC-2026-0047", # AWS-LC: CN wildcard bypass
-    "RUSTSEC-2026-0048", # AWS-LC: CRL DP scope check error
-    "RUSTSEC-2026-0044", # AWS-LC: CN wildcard bypass via Unicode
-    # rustls-webpki advisory — transitive via reqwest's rustls
-    "RUSTSEC-2026-0049", # rustls-webpki: CRL matching logic error
-    # remove_dir_all — transitive via powersync_test_utils dev-dependency tempdir
-    "RUSTSEC-2023-0018", # remove_dir_all: TOCTOU race condition
-    # tempdir unmaintained — transitive via powersync_test_utils
-    "RUSTSEC-2018-0017", # tempdir deprecated
+    "RUSTSEC-2023-0018", # remove_dir_all is a test-only tempdir dependency
+    "RUSTSEC-2018-0017", # tempdir is test-only and inherited from upstream
+    "RUSTSEC-2026-0195", # quick-xml NsReader is build-only via Wayland scanner on trusted XML
+    "RUSTSEC-2026-0194", # quick-xml is used only by upstream example desktop build tooling
+    "RUSTSEC-2026-0192", # ttf-parser is used only by the upstream egui example
 ]
 
 [sources]

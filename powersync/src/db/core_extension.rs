@@ -1,8 +1,7 @@
-use std::{fmt::Display, str::FromStr};
-
-use rusqlite::{Connection, params};
-
+use crate::db::connection::SqliteConnection;
 use crate::error::{PowerSyncError, RawPowerSyncError};
+use powersync_sqlite_nostd::ResultCode;
+use std::{fmt::Display, str::FromStr};
 
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord)]
 pub struct CoreExtensionVersion {
@@ -13,8 +12,8 @@ pub struct CoreExtensionVersion {
 
 impl CoreExtensionVersion {
     /// The minimum version of the core extension supported by the native SDK.
-    pub const MINIMUM: Self = Self::new(0, 4, 7);
-    pub const MAXIMUM_EXCLUSIVE: Self = Self::new(0, 5, 0);
+    pub const MINIMUM: Self = Self::new(0, 5, 1);
+    pub const MAXIMUM_EXCLUSIVE: Self = Self::new(0, 6, 0);
 
     pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
         Self {
@@ -35,17 +34,13 @@ impl CoreExtensionVersion {
         }
     }
 
-    pub(crate) fn check_from_db(conn: &Connection) -> Result<Self, PowerSyncError> {
-        let version =
-            conn.prepare("SELECT powersync_rs_version()")?
-                .query_row(params![], |row| {
-                    let value = row.get_ref(0)?;
-                    value
-                        .as_str()?
-                        .parse::<Self>()
-                        .map_err(|_| rusqlite::Error::InvalidQuery)
-                })?;
+    pub(crate) fn check_from_db(conn: &SqliteConnection) -> Result<Self, PowerSyncError> {
+        let stmt = conn.prepare("SELECT powersync_rs_version()")?;
+        let ResultCode::ROW = stmt.step()? else {
+            panic!("Expected row") // Can't happen, scalar select
+        };
 
+        let version = stmt.column_text(0)?.parse::<Self>()?;
         version.validate()?;
         Ok(version)
     }
