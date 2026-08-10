@@ -124,4 +124,4 @@ impl<'a> From<&'a StreamSubscriptionDescription<'a>> for StreamDescription<'a> {
         val.description()
     }
 }
-pub struct ChangedSyncSubscriptions(pub Vec<StreamKey>);
+pub(crate) struct ChangedSyncSubscriptions(pub(crate) Vec<StreamKey>);

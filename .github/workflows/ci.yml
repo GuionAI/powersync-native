@@ -2,6 +2,8 @@ name: Build and test
 
 on:
   push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
@@ -11,7 +13,6 @@ env:
 
 jobs:
   rust:
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     name: Build and test
     runs-on: ubuntu-latest
     steps:
@@ -27,16 +28,29 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - run: rustup update stable && rustup default stable && rustup component add clippy
 
-      - run: cargo build --verbose
-        name: Building project
+      - name: Build all features
+        run: cargo build --workspace --all-features --verbose
 
-      - run: cargo clippy
+      - name: Test all features
+        run: cargo test --workspace --all-features --verbose
 
-      - run: cargo test --verbose
-        name: Testing project
+      - name: Check without rusqlite
+        run: cargo check -p powersync --no-default-features
 
-      - name: Build without rusqlite
-        run: cargo build --no-default-features
+      - name: Check reqwest without rusqlite
+        run: cargo check -p powersync --no-default-features --features tokio,reqwest
+
+  musl:
+    name: Check musl release features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install musl target
+        run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Check PowerSync crate
+        run: cargo check -p powersync --target x86_64-unknown-linux-musl --no-default-features --features tokio,reqwest,rusqlite
 
   windows:
     name: Check Windows build
@@ -48,4 +62,4 @@ jobs:
         run: rustup update stable
 
       - name: Check PowerSync crate
-        run: cargo check -p powersync --all-targets
+        run: cargo check -p powersync --all-targets --all-features

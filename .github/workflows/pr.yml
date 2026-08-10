@@ -1,0 +1,58 @@
+name: PR
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint all targets and features
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Test all features
+        run: cargo test --workspace --all-features
+
+      - name: Check dependencies
+        run: cargo deny check
+
+      - name: Build all features
+        run: cargo build --workspace --all-features
+
+  osv-scan:
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@v2.3.5
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+      pull-requests: write

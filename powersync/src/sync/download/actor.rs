@@ -21,7 +21,7 @@ use crate::{
 };
 
 /// A command sent from a database to the download actor.
-pub enum DownloadActorCommand {
+pub(crate) enum DownloadActorCommand {
     Connect(SyncOptions),
     Disconnect,
     ResolveOfflineSyncStatusIfNotConnected,

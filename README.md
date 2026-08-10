@@ -13,6 +13,9 @@ _[PowerSync](https://www.powersync.com) is a sync engine for building local-firs
 This repository contains code used to build a PowerSync SDK for native development.
 PowerSync is available as a Rust crate in `powersync/`, and on crates.io as the `powersync` crate.
 
+Guion release tags add a small, tested compatibility layer for Guion consumers. See
+[`docs/guion-patches.md`](docs/guion-patches.md) for the exact upstream delta and patch policy.
+
 ## Running the examples
 
 To start an example:

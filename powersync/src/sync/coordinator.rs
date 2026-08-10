@@ -88,7 +88,7 @@ impl SyncCoordinator {
     /// Handle the set of active sync stream subscriptions changing.
     ///
     /// This is a no-op if not connected.
-    pub async fn handle_subscriptions_changed(&self, update: ChangedSyncSubscriptions) {
+    pub(crate) async fn handle_subscriptions_changed(&self, update: ChangedSyncSubscriptions) {
         self.download_actor_request(DownloadActorCommand::SubscriptionsChanged(update))
             .await;
     }
@@ -118,7 +118,7 @@ impl SyncCoordinator {
         slot.clone()
     }
 
-    pub fn receive_download_commands(&self) -> Receiver<AsyncRequest<DownloadActorCommand>> {
+    pub(crate) fn receive_download_commands(&self) -> Receiver<AsyncRequest<DownloadActorCommand>> {
         Self::install_actor_channel(&self.control_downloads)
     }
 
