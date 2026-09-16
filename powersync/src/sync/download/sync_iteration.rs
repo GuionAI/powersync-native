@@ -193,9 +193,10 @@ impl DownloadEvent {
             let (op, arg) = self.into_powersync_control_argument();
 
             stmt.bind_text(1, op, Destructor::STATIC)?;
-            arg.bind_to(&stmt, 2)?;
+            // SAFETY: `arg` remains alive until after `stmt` is explicitly dropped below.
+            unsafe { arg.bind_to(&stmt, 2)? };
 
-            if let ResultCode::ROW = stmt.step()? {
+            let instructions = if let ResultCode::ROW = stmt.step()? {
                 let instructions = stmt.column_text(0).map_err(|_| {
                     PowerSyncError::argument_error("Could not read powersync_control instructions")
                 })?;
@@ -203,7 +204,10 @@ impl DownloadEvent {
                 serde_json::from_str(instructions)?
             } else {
                 panic!("Expected a row") // Can't happen, scalar select
-            }
+            };
+
+            drop(stmt);
+            instructions
         };
 
         tx.commit()?;
@@ -219,9 +223,10 @@ enum PowerSyncControlArgument {
 }
 
 impl PowerSyncControlArgument {
-    fn bind_to(&self, stmt: &ManagedStmt, index: i32) -> Result<(), ResultCode> {
-        // We use Destructor::STATIC here which is technically not safe, but fine since we'll always
-        // drop the statement before the control argument.
+    /// # Safety
+    ///
+    /// The argument must outlive `stmt`.
+    unsafe fn bind_to(&self, stmt: &ManagedStmt, index: i32) -> Result<(), ResultCode> {
         match self {
             PowerSyncControlArgument::Null => stmt.bind_null(index),
             PowerSyncControlArgument::StaticString(str) => {
