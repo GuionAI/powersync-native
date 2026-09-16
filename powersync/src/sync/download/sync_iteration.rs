@@ -193,9 +193,10 @@ impl DownloadEvent {
             let (op, arg) = self.into_powersync_control_argument();
 
             stmt.bind_text(1, op, Destructor::STATIC)?;
-            arg.bind_to(&stmt, 2)?;
+            // SAFETY: `arg` remains alive until after `stmt` is explicitly dropped below.
+            unsafe { arg.bind_to(&stmt, 2)? };
 
-            if let ResultCode::ROW = stmt.step()? {
+            let instructions = if let ResultCode::ROW = stmt.step()? {
                 let instructions = stmt.column_text(0).map_err(|_| {
                     PowerSyncError::argument_error("Could not read powersync_control instructions")
                 })?;
@@ -203,7 +204,10 @@ impl DownloadEvent {
                 serde_json::from_str(instructions)?
             } else {
                 panic!("Expected a row") // Can't happen, scalar select
-            }
+            };
+
+            drop(stmt);
+            instructions
         };
 
         tx.commit()?;
@@ -219,45 +223,21 @@ enum PowerSyncControlArgument {
 }
 
 impl PowerSyncControlArgument {
-    fn bind_to(&self, stmt: &ManagedStmt, index: i32) -> Result<(), ResultCode> {
+    /// # Safety
+    ///
+    /// The argument must outlive `stmt`.
+    unsafe fn bind_to(&self, stmt: &ManagedStmt, index: i32) -> Result<(), ResultCode> {
         match self {
             PowerSyncControlArgument::Null => stmt.bind_null(index),
             PowerSyncControlArgument::StaticString(str) => {
                 stmt.bind_text(index, str, Destructor::STATIC)
             }
-            PowerSyncControlArgument::String(str) => {
-                stmt.bind_text(index, str, Destructor::TRANSIENT)
-            }
+            PowerSyncControlArgument::String(str) => stmt.bind_text(index, str, Destructor::STATIC),
             PowerSyncControlArgument::Bytes(bytes) => {
-                stmt.bind_blob(index, bytes, Destructor::TRANSIENT)
+                stmt.bind_blob(index, bytes, Destructor::STATIC)
             }
         }?;
         Ok(())
-    }
-}
-
-#[cfg(all(test, feature = "rusqlite"))]
-mod tests {
-    use std::hint::black_box;
-
-    use super::*;
-
-    #[test]
-    fn binding_dynamic_control_arguments_copies_the_payload() {
-        let connection = rusqlite::Connection::open_in_memory().unwrap();
-        let connection = SqliteConnection::from(connection);
-        let stmt = connection.prepare("SELECT ?").unwrap();
-        let expected = "a".repeat(4096);
-
-        PowerSyncControlArgument::String(expected.clone())
-            .bind_to(&stmt, 1)
-            .unwrap();
-
-        let overwrite = "b".repeat(4096);
-        black_box(&overwrite);
-
-        assert_eq!(stmt.step().unwrap(), ResultCode::ROW);
-        assert_eq!(stmt.column_text(0).unwrap(), expected);
     }
 }
 
