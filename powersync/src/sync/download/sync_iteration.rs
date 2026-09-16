@@ -189,11 +189,11 @@ impl DownloadEvent {
         let tx = TransactionGuard::new(conn)?;
 
         let instructions = {
-            let stmt = tx.inner.prepare("SELECT powersync_control(?, ?)")?;
             let (op, arg) = self.into_powersync_control_argument();
+            let stmt = tx.inner.prepare("SELECT powersync_control(?, ?)")?;
 
             stmt.bind_text(1, op, Destructor::STATIC)?;
-            // SAFETY: `arg` remains alive until after `stmt` is explicitly dropped below.
+            // SAFETY: `arg` was declared before `stmt`, so it outlives `stmt` on every exit.
             unsafe { arg.bind_to(&stmt, 2)? };
 
             let instructions = if let ResultCode::ROW = stmt.step()? {
@@ -238,6 +238,77 @@ impl PowerSyncControlArgument {
             }
         }?;
         Ok(())
+    }
+}
+
+#[cfg(feature = "rusqlite")]
+#[cfg(test)]
+mod tests {
+    use std::{pin::Pin, sync::Arc, time::Duration};
+
+    use futures_lite::future;
+    use rusqlite::Connection;
+
+    use super::*;
+    use crate::{
+        db::pool::ConnectionPool,
+        env::{PowerSyncEnvironment, Timer},
+        http::{HttpClient, Request, Response},
+        schema::Schema,
+        sync::coordinator::SyncCoordinator,
+    };
+
+    struct UnusedClient;
+
+    #[async_trait::async_trait]
+    impl HttpClient for UnusedClient {
+        async fn send(&self, _request: Request) -> Result<Response, PowerSyncError> {
+            panic!("the test does not make HTTP requests")
+        }
+    }
+
+    struct UnusedTimer;
+
+    impl Timer for UnusedTimer {
+        fn delay_once(&self, _duration: Duration) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+            Box::pin(future::pending())
+        }
+    }
+
+    async fn invoke(event: DownloadEvent) {
+        PowerSyncEnvironment::powersync_auto_extension().unwrap();
+        let pool = ConnectionPool::single_connection(Connection::open_in_memory().unwrap());
+        let environment = PowerSyncEnvironment::custom(UnusedClient, pool, UnusedTimer);
+        let coordinator = Arc::new(SyncCoordinator::default());
+        let db = InnerPowerSyncState::new(environment, Schema::default().into(), &coordinator);
+        let mut writer = db.writer().await.unwrap();
+
+        DownloadEvent::Start(StartDownloadIteration {
+            parameters: serde_json::Value::Object(Default::default()),
+            schema: Arc::clone(&db.schema),
+            include_defaults: true,
+            active_streams: vec![],
+        })
+        .invoke_control(writer.sqlite_connection_mut())
+        .unwrap();
+
+        event
+            .invoke_control(writer.sqlite_connection_mut())
+            .unwrap();
+    }
+
+    #[test]
+    fn dynamic_control_arguments_reach_the_core_extension() {
+        future::block_on(async {
+            invoke(DownloadEvent::TextLine {
+                data: r#"{"checkpoint":{"last_op_id":"1","buckets":[],"streams":[]}}"#.to_owned(),
+            })
+            .await;
+            invoke(DownloadEvent::BinaryLine {
+                data: b"\x85\x00\x00\x00\x03checkpoint\x00t\x00\x00\x00\x02last_op_id\x00\x02\x00\x00\x001\x00\x0awrite_checkpoint\x00\x04buckets\x00B\x00\x00\x00\x030\x00:\x00\x00\x00\x02bucket\x00\x02\x00\x00\x00a\x00\x10checksum\x00\x00\x00\x00\x00\x10priority\x00\x03\x00\x00\x00\x10count\x00\x01\x00\x00\x00\x00\x00\x00\x00".to_vec(),
+            })
+            .await;
+        });
     }
 }
 
